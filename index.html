@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ThisBeat Generator</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #0f0; padding: 20px; }
+    textarea, input, select, button {
+      background: #222; color: #0f0; border: 1px solid #0f0; border-radius: 6px;
+      padding: 6px; margin: 6px 0; width: 100%;
+    }
+    canvas { background: black; width: 100%; height: 100px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>🎵 ThisBeat HTML Example</h1>
+
+  <label>Frequency (Hz):</label>
+  <input type="number" id="freq" min="1" max="100000000" value="8000">
+
+  <label>Formula Type:</label>
+  <select id="type">
+    <option value="bytebeat">ByteBeat (0–255)</option>
+    <option value="signed">Signed ByteBeat (-128–127)</option>
+    <option value="floatbeat">FloatBeat (-1.0–1.0)</option>
+    <option value="funcbeat">FuncBeat (custom function)</option>
+  </select>
+
+  <label>Formula (JS Expression, use t as time):</label>
+  <textarea id="formula" rows="4">(t>>4|t*t)&(t>>5)</textarea>
+
+  <label>Arguments (optional, e.g. {"a":10,"b":0.5}):</label>
+  <textarea id="args" rows="2">{}</textarea>
+
+  <button onclick="startBeat()">▶ Play</button>
+  <button onclick="stopBeat()">⏹ Stop</button>
+  <button onclick="downloadBeat()">💾 Download</button>
+
+  <canvas id="scope"></canvas>
+
+<script>
+let audioCtx, source, scriptNode, buffer, playing = false;
+
+function parseArgs() {
+  try { return JSON.parse(document.getElementById('args').value); }
+  catch { return {}; }
+}
+
+function makeBeat() {
+  const freq = parseInt(document.getElementById("freq").value);
+  const type = document.getElementById("type").value;
+  const formula = document.getElementById("formula").value;
+  const args = parseArgs();
+
+  const seconds = 10; // length of render
+  const length = freq * seconds;
+  buffer = new Float32Array(length);
+
+  let f;
+  if (type === "funcbeat") {
+    f = new Function("t", "args", "with(args){ return " + formula + "; }");
+  } else {
+    f = new Function("t", "args", "with(args){ return " + formula + "; }");
+  }
+
+  for (let t = 0; t < length; t++) {
+    let val = f(t, args);
+    if (type === "bytebeat") val = (val & 255) / 128 - 1;
+    if (type === "signed") val = ((val << 24) >> 24) / 128;
+    if (type === "floatbeat") val = Math.max(-1, Math.min(1, val));
+    buffer[t] = val || 0;
+  }
+}
+
+function startBeat() {
+  if (playing) stopBeat();
+  makeBeat();
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const audioBuffer = audioCtx.createBuffer(1, buffer.length, parseInt(document.getElementById("freq").value));
+  audioBuffer.getChannelData(0).set(buffer);
+  source = audioCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(audioCtx.destination);
+  source.start();
+  playing = true;
+}
+
+function stopBeat() {
+  if (source) source.stop();
+  playing = false;
+}
+
+function downloadBeat() {
+  if (!buffer) return;
+  const wav = encodeWAV(buffer, parseInt(document.getElementById("freq").value));
+  const blob = new Blob([wav], { type: "audio/wav" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "thisbeat.wav";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function encodeWAV(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  function writeString(v, o, s){ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); }
+  let offset = 0;
+  writeString(view, offset, "RIFF"); offset += 4;
+  view.setUint32(offset, 36 + samples.length * 2, true); offset += 4;
+  writeString(view, offset, "WAVE"); offset += 4;
+  writeString(view, offset, "fmt "); offset += 4;
+  view.setUint32(offset, 16, true); offset += 4;
+  view.setUint16(offset, 1, true); offset += 2;
+  view.setUint16(offset, 1, true); offset += 2;
+  view.setUint32(offset, sampleRate, true); offset += 4;
+  view.setUint32(offset, sampleRate * 2, true); offset += 4;
+  view.setUint16(offset, 2, true); offset += 2;
+  view.setUint16(offset, 16, true); offset += 2;
+  writeString(view, offset, "data"); offset += 4;
+  view.setUint32(offset, samples.length * 2, true); offset += 4;
+  let i=0; for(; i<samples.length; i++, offset+=2){
+    let s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buffer;
+}
+</script>
+</body>
+</html>
